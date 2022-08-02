@@ -11,7 +11,7 @@ def get_pubkey( req ):
 
     d = boto3.client('dynamodb')
     s3 = boto3.resource('s3')
-    
+
     response = d.get_item(
         Key={ 'device-id': { 'S' : device_id } },
         TableName='widgiot-public-keys'
@@ -20,14 +20,12 @@ def get_pubkey( req ):
     s3_bucket = response['Item']['pubkey-bucket']['S']
     s3_object = response['Item']['pubkey-object']['S']
     content_object = s3.Object(s3_bucket, s3_object)
-    file_content = content_object.get()['Body'].read().decode('utf-8')
-
-    return file_content
+    return content_object.get()['Body'].read().decode('utf-8')
 
 def provision_certificate( csr, pubkey ):
     acmpca = boto3.client('acm-pca')
     ca_arn = os.environ['ACMPCA_CA_ARN']
-        
+
     # Create the Certificate
     # TODO: Automatically compute days remaining ... somehow?
     cert = acmpca.issue_certificate(
@@ -40,16 +38,16 @@ def provision_certificate( csr, pubkey ):
         },
         IdempotencyToken='1234'
     )
-    
+
     # Fetch the certificate
     err = 1
     while 1:
         try:
-            certificate = acmpca.get_certificate(
+            return acmpca.get_certificate(
                 CertificateAuthorityArn=ca_arn,
-                CertificateArn=cert['CertificateArn']
+                CertificateArn=cert['CertificateArn'],
             )
-            return certificate
+
         except:
             print("Certificate not ready yet")
             time.sleep(1)

@@ -21,8 +21,6 @@ def get_pubkey( req ):
 
 def lambda_handler(event, context):
     print("Method ARN: " + event['methodArn'])
-    principalId = "user|a1b2c3d4"
-    
     # Get the public key from the CSR
     device_csr = base64.b64decode(event['headers']['device-csr']).decode('utf-8')
     req = load_certificate_request( FILETYPE_PEM, device_csr )
@@ -34,29 +32,25 @@ def lambda_handler(event, context):
     ori_pubkey_pem = base64.b64decode(get_pubkey(req))
     pubbuf = OpenSSL.crypto.load_publickey(FILETYPE_PEM, ori_pubkey_pem)
     ori_pubkey_pem = dump_publickey( FILETYPE_PEM, pubbuf)
-    
+
     print(ori_pubkey_pem)
     print(req_pubkey_pem)
-    
-    if ( ori_pubkey_pem == req_pubkey_pem ):
-        # Return 201 and respond w sigv4 uri to signed certificate
-        tmp = event['methodArn'].split(':')
-        apiGatewayArnTmp = tmp[5].split('/')
-        awsAccountId = tmp[4]
-    
-        policy = AuthPolicy(principalId, awsAccountId)
-        policy.restApiId = apiGatewayArnTmp[0]
-        policy.region = tmp[3]
-        policy.stage = apiGatewayArnTmp[1]
-        policy.allowMethod(HttpVerb.POST, "/new")
-        policy.allowMethod(HttpVerb.POST, "/proto")
-    
-        # Finally, build the policy
-        authResponse = policy.build()
 
-        return authResponse
-    else:
+    if ori_pubkey_pem != req_pubkey_pem:
         raise Exception('Unauthorized')
+    # Return 201 and respond w sigv4 uri to signed certificate
+    tmp = event['methodArn'].split(':')
+    apiGatewayArnTmp = tmp[5].split('/')
+    awsAccountId = tmp[4]
+
+    policy = AuthPolicy("user|a1b2c3d4", awsAccountId)
+    policy.restApiId = apiGatewayArnTmp[0]
+    policy.region = tmp[3]
+    policy.stage = apiGatewayArnTmp[1]
+    policy.allowMethod(HttpVerb.POST, "/new")
+    policy.allowMethod(HttpVerb.POST, "/proto")
+
+    return policy.build()
     
 class HttpVerb:
     GET     = "GET"
@@ -104,10 +98,13 @@ class AuthPolicy(object):
         the internal list contains a resource ARN and a condition statement. The condition
         statement can be null."""
         if verb != "*" and not hasattr(HttpVerb, verb):
-            raise NameError("Invalid HTTP verb " + verb + ". Allowed verbs in HttpVerb class")
+            raise NameError(f"Invalid HTTP verb {verb}. Allowed verbs in HttpVerb class")
         resourcePattern = re.compile(self.pathRegex)
         if not resourcePattern.match(resource):
-            raise NameError("Invalid resource path: " + resource + ". Path should match " + self.pathRegex)
+            raise NameError(
+                f"Invalid resource path: {resource}. Path should match {self.pathRegex}"
+            )
+
 
         if resource[:1] == "/":
             resource = resource[1:]
@@ -134,13 +131,11 @@ class AuthPolicy(object):
     def _getEmptyStatement(self, effect):
         """Returns an empty statement object prepopulated with the correct action and the
         desired effect."""
-        statement = {
+        return {
             'Action': 'execute-api:Invoke',
             'Effect': effect[:1].upper() + effect[1:].lower(),
-            'Resource': []
+            'Resource': [],
         }
-
-        return statement
 
     def _getStatementForEffect(self, effect, methods):
         """This function loops over an array of objects containing a resourceArn and

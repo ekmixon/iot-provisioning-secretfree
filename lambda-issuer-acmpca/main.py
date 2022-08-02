@@ -11,7 +11,7 @@ import random
 def provision_certificate( csr ):
     acmpca = boto3.client('acm-pca')
     ca_arn = os.environ['ACMPCA_CA_ARN']
-        
+
     # Create the Certificate - duration 150 days - very arbitrary
     # TODO: pull the Value up to environment variable driven duration
     # TODO: pull up the SigningAlgorithm to include RSA256 as well as
@@ -21,22 +21,22 @@ def provision_certificate( csr ):
         CertificateAuthorityArn=ca_arn,
         SigningAlgorithm='SHA256WITHRSA',
         Csr=csr,
-        Validity={
-            'Value': 150,
-            'Type': 'DAYS'
-        },
-        IdempotencyToken=''.join(random.choice(string.ascii_lowercase) for i in range(10))
+        Validity={'Value': 150, 'Type': 'DAYS'},
+        IdempotencyToken=''.join(
+            random.choice(string.ascii_lowercase) for _ in range(10)
+        ),
     )
-    
+
+
     # Fetch the certificate
     err = 1
     while 1:
         try:
-            certificate= acmpca.get_certificate(
+            return acmpca.get_certificate(
                 CertificateAuthorityArn=ca_arn,
-                CertificateArn=cert['CertificateArn']
+                CertificateArn=cert['CertificateArn'],
             )
-            return certificate
+
         except:
             print("Certificate not ready yet")
             time.sleep(1)
@@ -70,19 +70,19 @@ def deploy_thing( device_id, certificate_arn ):
     # that Thing for certificate attachment.  Otherwise, create a new Thing.
 
     thing_name = None
-    
+
     try:
         iot.describe_thing( thingName = device_id )
         thing_name = device_id
     except:
-        print( "Thing [{}] does not exist. Will create.".format( device_id ) )
+        print(f"Thing [{device_id}] does not exist. Will create.")
 
-    if ( thing_name == None ):
+    if thing_name is None:
         try:
             iot.create_thing( thingName = device_id )
             thing_name = device_id
         except:
-            print( "Thing [{}] does not exist and failed to create.".format( device_id ) )
+            print(f"Thing [{device_id}] does not exist and failed to create.")
             return False
 
     # Attach the Thing to the Certificate.
@@ -101,8 +101,14 @@ def deploy_policy( certificate_arn, region, account ):
     policy_name = os.environ["SKUNAME"]
     iot = boto3.client('iot')
     create_policy = False
-    
-    policy_document = '''{{
+
+    try:
+        iot.get_policy( policyName = policy_name )
+    except:
+        create_policy = True
+
+    if create_policy:
+        policy_document = '''{{
   "Version": "2012-10-17",
   "Statement": [
     {{
@@ -144,15 +150,9 @@ def deploy_policy( certificate_arn, region, account ):
   ]
 }}'''
 
-    try:
-        iot.get_policy( policyName = policy_name )
-    except:
-        create_policy = True
-
-    if ( create_policy == True ):
         response = iot.create_policy( policyName = policy_name,
                                       policyDocument = policy_document.format( region, account ) )
-        if ( response == None ): return None
+        if response is None: return None
 
     try:
         iot.attach_policy( policyName = policy_name, target = certificate_arn )
@@ -163,7 +163,7 @@ def lambda_handler(event, context):
     # Whoami and Whatami is important for construction region sensitive ARNs
     region = context.invoked_function_arn.split(":")[3]
     account = context.invoked_function_arn.split(":")[4]
-    
+
     csr = base64.b64decode(event['headers']['device-csr'])
     req = load_certificate_request( FILETYPE_PEM, csr )
     device_id = req.get_subject().CN
@@ -175,7 +175,7 @@ def lambda_handler(event, context):
     # been registered.
 
     certificate_arn = deploy_certificate( certificate )
-    if ( certificate_arn == None ): return None
+    if certificate_arn is None: return None
 
     # Create the Thing object and attach to the deployed certificate
 
